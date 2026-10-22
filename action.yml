@@ -1,11 +1,11 @@
 apiVersion: automation.cloudbees.io/v1alpha1
 kind: action
-name: ADP Jira search issues
+name: Jira search issues
 description: Searches Jira Cloud with JQL and returns issue data and a Markdown table
 
 inputs:
   jira-url:
-    description: Jira Cloud base URL, for example https://adp-uat.atlassian.net
+    description: Jira Cloud base URL, for example https://xxx.atlassian.net
     required: true
   jira-email:
     description: Atlassian account email associated with the API token
