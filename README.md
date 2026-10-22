@@ -1,4 +1,4 @@
-# ADP Jira Search Issues Action
+# Jira Search Issues Action
 
 Executes a Jira Cloud JQL query and returns:
 
