@@ -1,0 +1,97 @@
+apiVersion: automation.cloudbees.io/v1alpha1
+kind: action
+name: ADP Jira search issues
+description: Searches Jira Cloud with JQL and returns issue data and a Markdown table
+
+inputs:
+  jira-url:
+    description: Jira Cloud base URL, for example https://adp-uat.atlassian.net
+    required: true
+  jira-email:
+    description: Atlassian account email associated with the API token
+    required: true
+  jira-api-token:
+    description: Atlassian API token
+    required: true
+  jql:
+    description: JQL query to execute
+    required: true
+  max-results:
+    description: Maximum number of issues to return
+    required: false
+    default: "10"
+
+outputs:
+  issues:
+    description: JSON array containing the returned Jira issues
+    value: ${{ steps.search.outputs.issues }}
+  total:
+    description: Number of issues returned by this request
+    value: ${{ steps.search.outputs.total }}
+  issues-table:
+    description: Jira results formatted as a Markdown table
+    value: ${{ steps.search.outputs.issues-table }}
+
+runs:
+  steps:
+    - id: search
+      name: Search Jira issues
+      uses: docker://alpine:3.20
+      shell: sh
+      env:
+        JIRA_URL: ${{ inputs.jira-url }}
+        JIRA_EMAIL: ${{ inputs.jira-email }}
+        JIRA_API_TOKEN: ${{ inputs.jira-api-token }}
+        JQL: ${{ inputs.jql }}
+        MAX_RESULTS: ${{ inputs.max-results }}
+      run: |
+        set -eu
+
+        apk add --no-cache curl jq >/dev/null
+
+        : "${JIRA_URL:?jira-url is required}"
+        : "${JIRA_EMAIL:?jira-email is required}"
+        : "${JIRA_API_TOKEN:?jira-api-token is required}"
+        : "${JQL:?jql is required}"
+
+        JIRA_URL="${JIRA_URL%/}"
+
+        HTTP_CODE=$(curl --silent --show-error \
+          --output /tmp/jira-search.json \
+          --write-out '%{http_code}' \
+          --user "${JIRA_EMAIL}:${JIRA_API_TOKEN}" \
+          --header "Accept: application/json" \
+          --get \
+          --data-urlencode "jql=${JQL}" \
+          --data-urlencode "maxResults=${MAX_RESULTS}" \
+          --data-urlencode "fields=issuetype,summary,status,priority,assignee" \
+          "${JIRA_URL}/rest/api/3/search/jql")
+
+        echo "Jira search response: HTTP ${HTTP_CODE}"
+
+        if [ "${HTTP_CODE}" != "200" ]; then
+          echo "Jira rejected the search request:"
+          jq . /tmp/jira-search.json 2>/dev/null || cat /tmp/jira-search.json
+          exit 1
+        fi
+
+        jq -c '.issues // []' /tmp/jira-search.json > "${CLOUDBEES_OUTPUTS}/issues"
+        jq -r '(.issues // []) | length' /tmp/jira-search.json > "${CLOUDBEES_OUTPUTS}/total"
+
+        {
+          echo '| Key | Type | Summary | Status | Priority | Assignee |'
+          echo '|---|---|---|---|---|---|'
+          jq -r '
+            (.issues // [])[] |
+            def safe: tostring | gsub("[|\\r\\n]"; " ");
+            "| " + (.key // "Unknown" | safe) +
+            " | " + (.fields.issuetype.name // "Unknown" | safe) +
+            " | " + (.fields.summary // "" | safe) +
+            " | " + (.fields.status.name // "Unknown" | safe) +
+            " | " + (.fields.priority.name // "Unspecified" | safe) +
+            " | " + (.fields.assignee.displayName // "Unassigned" | safe) + " |"
+          ' /tmp/jira-search.json
+        } > "${CLOUDBEES_OUTPUTS}/issues-table"
+
+        echo "Jira search completed successfully."
+
